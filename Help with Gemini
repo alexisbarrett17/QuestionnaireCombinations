@@ -1,0 +1,275 @@
+"""
+APPROACH 1: Vary ONE Field at a Time
+- Holds all security fields at their default values
+- Rotates through each field's options one at a time
+- ~44 total combos — fits easily in Excel, finishes in seconds
+- Best for: seeing exactly how each individual field affects API output
+"""
+
+import json
+import copy
+import requests
+import time
+from openpyxl import Workbook
+from openpyxl.styles import Font, PatternFill, Alignment, Border, Side
+from openpyxl.utils import get_column_letter
+
+# ─── CONFIGURATION ────────────────────────────────────────────────────────────
+API_URL     = "http://3.108.47.165/api/cyber-insurance?="
+API_HEADERS = {"Content-Type": "application/json"}
+TIMEOUT     = 30
+DELAY       = 0.3
+OUTPUT_FILE = "approach1_results.xlsx"
+DRY_RUN     = False  # Set True to skip real API calls
+
+# ─── BASE PAYLOAD ─────────────────────────────────────────────────────────────
+BASE_PAYLOAD = {
+    "businessQuestions": {
+        "name": "Francis Xavier",
+        "phone": "(992) 937-1862",
+        "email": "stresstest@utah.edu",
+        "companyName": "Stress",
+        "country": "US",
+        "region": "Utah",
+        "primaryIndustry": "11",
+        "employeeCount": "200",
+        "annualRevenue": "2759098",
+        "revenue2023": "545877",
+        "revenue2022": "398672",
+        "regulations": ["FTC"],
+        "personalRecords": [
+            "Payment Card Information (PCI)",
+            "Personally Identifiable Information (PII)",
+            "Protected Health Information (PHI)"
+        ],
+        "recentBreach": "No",
+        "incidentCount": "",
+        "primaryCause": "",
+        "dataExposed": [],
+        "recordsExposed": "",
+        "hasInsurance": "No",
+        "insuranceCarrier": "Chubb INA Group",
+        "insuranceCoverage": [
+            "Business Interruption Loss",
+            "Incident Response Costs",
+            "Privacy Liability Coverage"
+        ],
+        "requestedCoverage": [],
+        "Payment Card Information (PCI)":          {"records": "25000", "recordsExposed": "4210"},
+        "Protected Health Information (PHI)":       {"records": "0",     "recordsExposed": "0"},
+        "Personally Identifiable Information (PII)":{"records": "25000", "recordsExposed": "4210"},
+        "Business Interruption Loss": {
+            "coverageAmount": "", "incomeProfitCover": "295329",
+            "incomeProfitDeductible": "0", "contingentLossCover": "50000",
+            "contingentLossDeductible": "0", "continuingExpenseCover": "40000",
+            "continuingExpenseDeductible": "0"
+        },
+        "Privacy Liability Coverage": {
+            "coverageAmount": "", "deductibleAmount": "",
+            "regulatoryFinesCover": "500000", "regulatoryFinesDeductible": "0",
+            "regulatoryPenaltiesCover": "548587", "regulatoryPenaltiesDeductible": "0",
+            "legalExpensesCover": "98465", "legalExpensesDeductible": "0"
+        },
+        "Incident Response Costs": {"coverageAmount": "64983", "deductibleAmount": "0"},
+        "countryCode": "+1", "cyberIncident": "No", "numIncident": "",
+        "CCPA": "0", "BIPA": "0", "GDPR": "0", "UK_ICO": "0",
+        "OPC_CA": "0", "NYDFS_Part_500": "0", "NYDFS_revenue": "No", "NYDFS_emp": "No"
+    },
+    "assessmentData": {"assessmentType": "None", "assessmentScore": 0}
+}
+
+# ─── DEFAULT SECURITY QUESTIONS ───────────────────────────────────────────────
+DEFAULT_SECURITY = {
+    "useMFA": "Critical Users (e.g., Executive Leadership, Cybersecurity Teams, Recovery Teams)",
+    "remoteAccess": "No",
+    "remoteAccessTypes": ["IT Support Staff (Tech Support Team)", "Executive Leadership (CEO, CFO, etc)"],
+    "securityTraining": "Every 3 months",
+    "fixProblems": "Yes",
+    "updatesIn30Days": "Yes",
+    "dataEncryption": "Yes",
+    "dataBacking": "Daily",
+    "thirdPartyControls": "I do not share data or systems access with other businesses",
+    "edrToolsUsed": "Other",
+    "IT Support Staff (Tech Support Team)": "22",
+    "Executive Leadership (CEO, CFO, etc)": "44",
+    "lockAccount": "Yes",
+    "ReceiveAlertApp": True,
+    "IncidentResponse": True
+}
+
+# ─── FIELD VARIATIONS (only the options you want tested) ──────────────────────
+FIELD_VARIATIONS = {
+    "useMFA": [
+        "Critical Users (e.g., Executive Leadership, Cybersecurity Teams, Recovery Teams)",
+        "All Employees",
+        "None"
+    ],
+    "remoteAccess": [
+        ("Yes", ["IT Support Staff (Tech Support Team)", "Executive Leadership (CEO, CFO, etc)"]),
+        ("No",  [])
+    ],
+    "securityTraining": [
+        "Once a year", "Twice a year", "Every 3 months", "We do not offer any training"
+    ],
+    "updatesIn30Days": ["Yes", "No"],
+    "fixProblems":     ["Yes", "No"],
+    "dataEncryption":  ["Yes", "No"],
+    "dataBacking": [
+        "Daily", "Weekly", "Once a month",
+        "Every 3 months", "Every 6 months", "Annually", "We do not backup our files"
+    ],
+    "thirdPartyControls": [
+        "Yes", "No", "I do not share data or systems access with other businesses"
+    ],
+    "edrToolsUsed":    ["Other", "None"],
+    "lockAccount":     ["Yes", "No"],
+    "ReceiveAlertApp": [True, False],
+    "IncidentResponse":[True, False],
+}
+
+
+def build_payload(field_name, value):
+    sq = copy.deepcopy(DEFAULT_SECURITY)
+    if field_name == "remoteAccess":
+        remote_val, types = value
+        sq["remoteAccess"]      = remote_val
+        sq["remoteAccessTypes"] = types
+    else:
+        sq[field_name] = value
+    payload = copy.deepcopy(BASE_PAYLOAD)
+    payload["securityQuestions"] = sq
+    return payload
+
+
+def call_api(payload):
+    if DRY_RUN:
+        return 200, json.dumps({"dry_run": True, "status": "ok", "combo": "dry run"})
+    try:
+        r = requests.post(API_URL, headers=API_HEADERS, json=payload, timeout=TIMEOUT)
+        return r.status_code, r.text
+    except requests.exceptions.Timeout:
+        return 0, "ERROR: Request timed out"
+    except Exception as e:
+        return 0, f"ERROR: {e}"
+
+
+def flatten(obj, prefix=""):
+    rows = []
+    if isinstance(obj, dict):
+        for k, v in obj.items():
+            fk = f"{prefix}.{k}" if prefix else k
+            if isinstance(v, (dict, list)):
+                rows.extend(flatten(v, fk))
+            else:
+                rows.append((fk, "" if v is None else str(v)))
+    elif isinstance(obj, list):
+        for i, item in enumerate(obj):
+            fk = f"{prefix}[{i}]"
+            if isinstance(item, (dict, list)):
+                rows.extend(flatten(item, fk))
+            else:
+                rows.append((fk, "" if item is None else str(item)))
+    return rows
+
+
+def parse_response(text):
+    try:
+        return flatten(json.loads(text))
+    except Exception:
+        return [("response", text)]
+
+
+def write_excel(results):
+    wb = Workbook()
+    ws = wb.active
+    ws.title = "Results"
+
+    hfont_j = Font(name="Arial", bold=True, color="FFFFFF", size=10)
+    hfont_a = Font(name="Arial", bold=True, color="FFFFFF", size=10)
+    hfill_j = PatternFill("solid", start_color="1F4E79")
+    hfill_a = PatternFill("solid", start_color="375623")
+    gfill   = PatternFill("solid", start_color="BDD7EE")
+    altfill = PatternFill("solid", start_color="EBF3FB")
+    dfont   = Font(name="Arial", size=9)
+    left    = Alignment(horizontal="left", vertical="top", wrap_text=True)
+    center  = Alignment(horizontal="center", vertical="top")
+    thin    = Border(
+        left=Side(style="thin", color="D9D9D9"), right=Side(style="thin", color="D9D9D9"),
+        top=Side(style="thin", color="D9D9D9"),  bottom=Side(style="thin", color="D9D9D9")
+    )
+
+    for idx, (label, payload, status, response) in enumerate(results):
+        jcol = 2 * idx + 1
+        acol = 2 * idx + 2
+        jlet = get_column_letter(jcol)
+        alet = get_column_letter(acol)
+
+        # Row 1 — combo label
+        c = ws.cell(row=1, column=jcol, value=label)
+        c.font = Font(name="Arial", bold=True, size=10); c.fill = gfill; c.alignment = center
+        ws.cell(row=1, column=acol).fill = gfill
+
+        # Row 2 — column headers
+        c = ws.cell(row=2, column=jcol, value="JSON Key / Value")
+        c.font = hfont_j; c.fill = hfill_j; c.alignment = center
+
+        c = ws.cell(row=2, column=acol, value=f"API Response (HTTP {status})")
+        c.font = hfont_a; c.fill = hfill_a; c.alignment = center
+
+        jrows = flatten(payload)
+        arows = parse_response(response)
+
+        for r in range(max(len(jrows), len(arows))):
+            row = r + 3
+            fill = altfill if r % 2 == 1 else None
+            if r < len(jrows):
+                k, v = jrows[r]
+                c = ws.cell(row=row, column=jcol, value=f"{k}: {v}")
+                c.font = dfont; c.alignment = left; c.border = thin
+                if fill: c.fill = fill
+            if r < len(arows):
+                k, v = arows[r]
+                c = ws.cell(row=row, column=acol, value=f"{k}: {v}")
+                c.font = dfont; c.alignment = left; c.border = thin
+                if fill: c.fill = fill
+
+        ws.column_dimensions[jlet].width = 55
+        ws.column_dimensions[alet].width = 55
+
+    ws.freeze_panes = "A3"
+    wb.save(OUTPUT_FILE)
+    print(f"Saved → {OUTPUT_FILE}")
+
+
+def main():
+    print("=" * 55)
+    print("  APPROACH 1: One Field at a Time")
+    print("=" * 55)
+
+    combos = []
+    for field, options in FIELD_VARIATIONS.items():
+        for opt in options:
+            if field == "remoteAccess":
+                label = f"{field} = {opt[0]} ({', '.join(opt[1]) if opt[1] else 'no staff'})"
+            else:
+                label = f"{field} = {opt}"
+            combos.append((field, opt, label))
+
+    print(f"Total combos: {len(combos)}")
+
+    results = []
+    for i, (field, opt, label) in enumerate(combos):
+        payload = build_payload(field, opt)
+        status, response = call_api(payload)
+        results.append((label, payload, status, response))
+        print(f"  [{i+1}/{len(combos)}] {label} → HTTP {status}")
+        if not DRY_RUN and i < len(combos) - 1:
+            time.sleep(DELAY)
+
+    write_excel(results)
+    success = sum(1 for _, _, s, _ in results if 200 <= s < 300)
+    print(f"\nDone! {len(results)} combos | ✅ {success} success | ❌ {len(results)-success} errors")
+
+
+if __name__ == "__main__":
+    main()
