@@ -1,11 +1,3 @@
-"""
-APPROACH 1: Vary ONE Field at a Time
-- Holds all security fields at their default values
-- Rotates through each field's options one at a time
-- ~44 total combos — fits easily in Excel, finishes in seconds
-- Best for: seeing exactly how each individual field affects API output
-"""
-
 import json
 import copy
 import requests
@@ -15,12 +7,13 @@ from openpyxl.styles import Font, PatternFill, Alignment, Border, Side
 from openpyxl.utils import get_column_letter
 
 # ─── CONFIGURATION ────────────────────────────────────────────────────────────
-API_URL     = "http://3.108.47.165/api/cyber-insurance?="
+# Note: Ensure the URL is exactly what your API documentation specifies
+API_URL = "http://3.108.47.165/api/cyber-insurance?="
 API_HEADERS = {"Content-Type": "application/json"}
-TIMEOUT     = 30
-DELAY       = 0.3
-OUTPUT_FILE = "approach1_results.xlsx"
-DRY_RUN     = False  # Set True to skip real API calls
+TIMEOUT = 30
+DELAY = 0.3
+OUTPUT_FILE = "security_variation_results.xlsx"
+DRY_RUN = False
 
 # ─── BASE PAYLOAD ─────────────────────────────────────────────────────────────
 BASE_PAYLOAD = {
@@ -55,9 +48,9 @@ BASE_PAYLOAD = {
             "Privacy Liability Coverage"
         ],
         "requestedCoverage": [],
-        "Payment Card Information (PCI)":          {"records": "25000", "recordsExposed": "4210"},
-        "Protected Health Information (PHI)":       {"records": "0",     "recordsExposed": "0"},
-        "Personally Identifiable Information (PII)":{"records": "25000", "recordsExposed": "4210"},
+        "Payment Card Information (PCI)": {"records": "25000", "recordsExposed": "4210"},
+        "Protected Health Information (PHI)": {"records": "0", "recordsExposed": "0"},
+        "Personally Identifiable Information (PII)": {"records": "25000", "recordsExposed": "4210"},
         "Business Interruption Loss": {
             "coverageAmount": "", "incomeProfitCover": "295329",
             "incomeProfitDeductible": "0", "contingentLossCover": "50000",
@@ -78,7 +71,6 @@ BASE_PAYLOAD = {
     "assessmentData": {"assessmentType": "None", "assessmentScore": 0}
 }
 
-# ─── DEFAULT SECURITY QUESTIONS ───────────────────────────────────────────────
 DEFAULT_SECURITY = {
     "useMFA": "Critical Users (e.g., Executive Leadership, Cybersecurity Teams, Recovery Teams)",
     "remoteAccess": "No",
@@ -97,45 +89,34 @@ DEFAULT_SECURITY = {
     "IncidentResponse": True
 }
 
-# ─── FIELD VARIATIONS (only the options you want tested) ──────────────────────
 FIELD_VARIATIONS = {
-    "useMFA": [
-        "Critical Users (e.g., Executive Leadership, Cybersecurity Teams, Recovery Teams)",
-        "All Employees",
-        "None"
-    ],
-    "remoteAccess": [
-        ("Yes", ["IT Support Staff (Tech Support Team)", "Executive Leadership (CEO, CFO, etc)"]),
-        ("No",  [])
-    ],
-    "securityTraining": [
-        "Once a year", "Twice a year", "Every 3 months", "We do not offer any training"
-    ],
+    "useMFA": ["Critical Users (e.g., Executive Leadership, Cybersecurity Teams, Recovery Teams)", "All Employees",
+               "None"],
+    "remoteAccess": [("Yes", ["IT Support Staff (Tech Support Team)", "Executive Leadership (CEO, CFO, etc)"]),
+                     ("No", [])],
+    "securityTraining": ["Once a year", "Twice a year", "Every 3 months", "We do not offer any training"],
     "updatesIn30Days": ["Yes", "No"],
-    "fixProblems":     ["Yes", "No"],
-    "dataEncryption":  ["Yes", "No"],
-    "dataBacking": [
-        "Daily", "Weekly", "Once a month",
-        "Every 3 months", "Every 6 months", "Annually", "We do not backup our files"
-    ],
-    "thirdPartyControls": [
-        "Yes", "No", "I do not share data or systems access with other businesses"
-    ],
-    "edrToolsUsed":    ["Other", "None"],
-    "lockAccount":     ["Yes", "No"],
+    "fixProblems": ["Yes", "No"],
+    "dataEncryption": ["Yes", "No"],
+    "dataBacking": ["Daily", "Weekly", "Once a month", "Every 3 months", "Every 6 months", "Annually",
+                    "We do not backup our files"],
+    "thirdPartyControls": ["Yes", "No", "I do not share data or systems access with other businesses"],
+    "edrToolsUsed": ["Other", "None"],
+    "lockAccount": ["Yes", "No"],
     "ReceiveAlertApp": [True, False],
-    "IncidentResponse":[True, False],
+    "IncidentResponse": [True, False],
 }
 
+
+# ─── LOGIC FUNCTIONS ──────────────────────────────────────────────────────────
 
 def build_payload(field_name, value):
     sq = copy.deepcopy(DEFAULT_SECURITY)
     if field_name == "remoteAccess":
-        remote_val, types = value
-        sq["remoteAccess"]      = remote_val
-        sq["remoteAccessTypes"] = types
-    else:
+        sq["remoteAccess"], sq["remoteAccessTypes"] = value
+    elif field_name != "BASELINE":
         sq[field_name] = value
+
     payload = copy.deepcopy(BASE_PAYLOAD)
     payload["securityQuestions"] = sq
     return payload
@@ -143,14 +124,13 @@ def build_payload(field_name, value):
 
 def call_api(payload):
     if DRY_RUN:
-        return 200, json.dumps({"dry_run": True, "status": "ok", "combo": "dry run"})
+        return 200, json.dumps({"dry_run": "success", "sample_output": 100})
     try:
-        r = requests.post(API_URL, headers=API_HEADERS, json=payload, timeout=TIMEOUT)
+        # Note: requests.post(json=...) automatically sets header to application/json
+        r = requests.post(API_URL, json=payload, timeout=TIMEOUT)
         return r.status_code, r.text
-    except requests.exceptions.Timeout:
-        return 0, "ERROR: Request timed out"
     except Exception as e:
-        return 0, f"ERROR: {e}"
+        return 0, f"CONNECTION ERROR: {str(e)}"
 
 
 def flatten(obj, prefix=""):
@@ -161,114 +141,111 @@ def flatten(obj, prefix=""):
             if isinstance(v, (dict, list)):
                 rows.extend(flatten(v, fk))
             else:
-                rows.append((fk, "" if v is None else str(v)))
+                rows.append((fk, str(v)))
     elif isinstance(obj, list):
         for i, item in enumerate(obj):
             fk = f"{prefix}[{i}]"
             if isinstance(item, (dict, list)):
                 rows.extend(flatten(item, fk))
             else:
-                rows.append((fk, "" if item is None else str(item)))
+                rows.append((fk, str(item)))
     return rows
 
 
 def parse_response(text):
     try:
         return flatten(json.loads(text))
-    except Exception:
-        return [("response", text)]
+    except:
+        return [("raw_response", text)]
 
 
 def write_excel(results):
     wb = Workbook()
     ws = wb.active
-    ws.title = "Results"
+    ws.title = "API Variation Test"
 
-    hfont_j = Font(name="Arial", bold=True, color="FFFFFF", size=10)
-    hfont_a = Font(name="Arial", bold=True, color="FFFFFF", size=10)
-    hfill_j = PatternFill("solid", start_color="1F4E79")
-    hfill_a = PatternFill("solid", start_color="375623")
-    gfill   = PatternFill("solid", start_color="BDD7EE")
-    altfill = PatternFill("solid", start_color="EBF3FB")
-    dfont   = Font(name="Arial", size=9)
-    left    = Alignment(horizontal="left", vertical="top", wrap_text=True)
-    center  = Alignment(horizontal="center", vertical="top")
-    thin    = Border(
-        left=Side(style="thin", color="D9D9D9"), right=Side(style="thin", color="D9D9D9"),
-        top=Side(style="thin", color="D9D9D9"),  bottom=Side(style="thin", color="D9D9D9")
-    )
+    # Styles
+    header_font = Font(bold=True, color="FFFFFF")
+    header_fill = PatternFill("solid", start_color="1F4E79")
+    highlight_fill = PatternFill("solid", start_color="FFFF00")  # Yellow for changed fields
+    error_fill = PatternFill("solid", start_color="FFC7CE")
+    border = Border(left=Side(style='thin', color='D9D9D9'), right=Side(style='thin', color='D9D9D9'),
+                    top=Side(style='thin', color='D9D9D9'), bottom=Side(style='thin', color='D9D9D9'))
+    align = Alignment(horizontal="left", vertical="top", wrap_text=True)
 
-    for idx, (label, payload, status, response) in enumerate(results):
-        jcol = 2 * idx + 1
-        acol = 2 * idx + 2
-        jlet = get_column_letter(jcol)
-        alet = get_column_letter(acol)
+    for idx, (label, field_key, payload, status, response) in enumerate(results):
+        col_start = (idx * 2) + 1
 
-        # Row 1 — combo label
-        c = ws.cell(row=1, column=jcol, value=label)
-        c.font = Font(name="Arial", bold=True, size=10); c.fill = gfill; c.alignment = center
-        ws.cell(row=1, column=acol).fill = gfill
+        # Header
+        ws.merge_cells(start_row=1, start_column=col_start, end_row=1, end_column=col_start + 1)
+        c = ws.cell(row=1, column=col_start, value=label)
+        c.font = Font(bold=True);
+        c.alignment = Alignment(horizontal="center")
 
-        # Row 2 — column headers
-        c = ws.cell(row=2, column=jcol, value="JSON Key / Value")
-        c.font = hfont_j; c.fill = hfill_j; c.alignment = center
+        # Sub-headers
+        h1 = ws.cell(row=2, column=col_start, value="Request Payload")
+        h2 = ws.cell(row=2, column=col_start + 1, value=f"Response (HTTP {status})")
+        for h in [h1, h2]:
+            h.font = header_font;
+            h.fill = header_fill;
+            h.alignment = Alignment(horizontal="center")
+        if status != 200: h2.fill = error_fill
 
-        c = ws.cell(row=2, column=acol, value=f"API Response (HTTP {status})")
-        c.font = hfont_a; c.fill = hfill_a; c.alignment = center
+        req_rows = flatten(payload)
+        res_rows = parse_response(response)
 
-        jrows = flatten(payload)
-        arows = parse_response(response)
+        for r in range(max(len(req_rows), len(res_rows))):
+            curr_row = r + 3
+            # Write Request Column
+            if r < len(req_rows):
+                k, v = req_rows[r]
+                cell = ws.cell(row=curr_row, column=col_start, value=f"{k}: {v}")
+                cell.border = border;
+                cell.alignment = align
+                # Highlight if this is the key we changed
+                if field_key in k:
+                    cell.fill = highlight_fill
 
-        for r in range(max(len(jrows), len(arows))):
-            row = r + 3
-            fill = altfill if r % 2 == 1 else None
-            if r < len(jrows):
-                k, v = jrows[r]
-                c = ws.cell(row=row, column=jcol, value=f"{k}: {v}")
-                c.font = dfont; c.alignment = left; c.border = thin
-                if fill: c.fill = fill
-            if r < len(arows):
-                k, v = arows[r]
-                c = ws.cell(row=row, column=acol, value=f"{k}: {v}")
-                c.font = dfont; c.alignment = left; c.border = thin
-                if fill: c.fill = fill
+            # Write Response Column
+            if r < len(res_rows):
+                k, v = res_rows[r]
+                cell = ws.cell(row=curr_row, column=col_start + 1, value=f"{k}: {v}")
+                cell.border = border;
+                cell.alignment = align
 
-        ws.column_dimensions[jlet].width = 55
-        ws.column_dimensions[alet].width = 55
+        ws.column_dimensions[get_column_letter(col_start)].width = 45
+        ws.column_dimensions[get_column_letter(col_start + 1)].width = 45
 
     ws.freeze_panes = "A3"
     wb.save(OUTPUT_FILE)
-    print(f"Saved → {OUTPUT_FILE}")
+    print(f"\nExcel saved as: {OUTPUT_FILE}")
 
+
+# ─── MAIN EXECUTION ───────────────────────────────────────────────────────────
 
 def main():
-    print("=" * 55)
-    print("  APPROACH 1: One Field at a Time")
-    print("=" * 55)
+    print("Starting API Stress Test...")
 
-    combos = []
+    # Setup test queue
+    queue = [("BASELINE", "none", "BASELINE (Default)")]
     for field, options in FIELD_VARIATIONS.items():
         for opt in options:
-            if field == "remoteAccess":
-                label = f"{field} = {opt[0]} ({', '.join(opt[1]) if opt[1] else 'no staff'})"
-            else:
-                label = f"{field} = {opt}"
-            combos.append((field, opt, label))
-
-    print(f"Total combos: {len(combos)}")
+            queue.append((field, opt, f"Test: {field}"))
 
     results = []
-    for i, (field, opt, label) in enumerate(combos):
+    for i, (field, opt, label) in enumerate(queue):
         payload = build_payload(field, opt)
         status, response = call_api(payload)
-        results.append((label, payload, status, response))
-        print(f"  [{i+1}/{len(combos)}] {label} → HTTP {status}")
-        if not DRY_RUN and i < len(combos) - 1:
+        results.append((label, field, payload, status, response))
+
+        # Console logging
+        indicator = "✅" if status == 200 else "❌"
+        print(f"[{i + 1}/{len(queue)}] {indicator} {label} ({opt}) -> HTTP {status}")
+
+        if not DRY_RUN:
             time.sleep(DELAY)
 
     write_excel(results)
-    success = sum(1 for _, _, s, _ in results if 200 <= s < 300)
-    print(f"\nDone! {len(results)} combos | ✅ {success} success | ❌ {len(results)-success} errors")
 
 
 if __name__ == "__main__":
